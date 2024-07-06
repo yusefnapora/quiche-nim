@@ -23,13 +23,16 @@
           cmake
           gnumake
           just
-          boringssl.dev
+          nim
+          nimble
+          clang
         ];
 
         packages-linux = packages-common;
 
         packages-darwin = packages-common ++ (with pkgs; [
           libiconv
+          openssl # needed for `nimble install` to fetch nim packages
           darwin.apple_sdk.frameworks.Security
           darwin.apple_sdk.frameworks.CoreServices
           darwin.apple_sdk.frameworks.CoreFoundation
