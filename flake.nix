@@ -22,6 +22,8 @@
           pkg-config
           cmake
           gnumake
+          just
+          boringssl.dev
         ];
 
         packages-linux = packages-common;
