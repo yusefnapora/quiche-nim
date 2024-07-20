@@ -12,3 +12,4 @@ bin           = @["quichenim"]
 # Dependencies
 
 requires "nim >= 2.0.4"
+requires "futhark >= 0.13.2"

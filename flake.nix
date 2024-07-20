@@ -26,6 +26,7 @@
           nim
           nimble
           clang
+          libclang.dev
         ];
 
         packages-linux = packages-common;
