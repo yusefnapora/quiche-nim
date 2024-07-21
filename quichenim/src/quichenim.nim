@@ -3,6 +3,8 @@
 
 import quichenim/ffi
 import quichenim/config
+import quichenim/packet
+import quichenim/conn 
 
 when isMainModule:
   echo "quiche version: ", version()
