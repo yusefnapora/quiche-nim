@@ -44,6 +44,16 @@
       "checksums": {
         "sha1": "33b5d9892d6ef514a5cc7e92585d319a15c23ab3"
       }
+    },
+    "results": {
+      "version": "0.4.0",
+      "vcsRevision": "8a03fb2e00dccbf35807c869e0184933b0cffa37",
+      "url": "https://github.com/arnetheduck/nim-results",
+      "downloadMethod": "git",
+      "dependencies": [],
+      "checksums": {
+        "sha1": "395b12b5e931ce871d1b10adcc7fe687d771abfb"
+      }
     }
   },
   "tasks": {}

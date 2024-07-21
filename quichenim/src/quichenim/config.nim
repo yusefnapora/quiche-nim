@@ -1,8 +1,16 @@
 import ffi
+import errors
+export errors
 
 type 
   QuicheConfig* = object
     internal: ptr struct_quiche_config
+
+  QuicheCCAlgorithm* = enum
+    Reno = enum_quiche_cc_algorithm.QUICHE_CC_RENO,
+    Cubic = enum_quiche_cc_algorithm.QUICHE_CC_CUBIC,
+    BBR = enum_quiche_cc_algorithm.QUICHE_CC_BBR,
+    BBR2 = enum_quiche_cc_algorithm.QUICHE_CC_BBR2, 
 
 proc `=destroy`*(config: QuicheConfig) =
   if config.internal != nil:
@@ -14,20 +22,20 @@ proc newQuicheConfig*(version: int): QuicheConfig =
   QuicheConfig(internal: internal)
 
 ## Configures the given certificate chain.
-proc load_cert_chain_from_pem_file*(config: QuicheConfig, path: string): int =
-  quiche_config_load_cert_chain_from_pem_file(config.internal, cstring(path))
+proc load_cert_chain_from_pem_file*(config: QuicheConfig, path: string): QuicheResult =
+  quiche_config_load_cert_chain_from_pem_file(config.internal, cstring(path)).toQuicheResult()
 
 ## Configures the given private key.
-proc load_priv_key_from_pem_file*(config: QuicheConfig, path: string): int = 
-  quiche_config_load_priv_key_from_pem_file(config.internal, cstring(path))
+proc load_priv_key_from_pem_file*(config: QuicheConfig, path: string): QuicheResult = 
+  quiche_config_load_priv_key_from_pem_file(config.internal, cstring(path)).toQuicheResult()
 
 ## Specifies a file where trusted CA certificates are stored for the purposes of certificate verification.
-proc load_verify_locations_from_file*(config: QuicheConfig, path: string): int =
-  quiche_config_load_verify_locations_from_file(config.internal, cstring(path))
+proc load_verify_locations_from_file*(config: QuicheConfig, path: string): QuicheResult =
+  quiche_config_load_verify_locations_from_file(config.internal, cstring(path)).toQuicheResult()
 
 ## Specifies a directory where trusted CA certificates are stored for the purposes of certificate verification.
-proc load_verify_locations_from_directory*(config: QuicheConfig, path: string): int =
-  quiche_config_load_verify_locations_from_directory(config.internal, cstring(path))
+proc load_verify_locations_from_directory*(config: QuicheConfig, path: string): QuicheResult =
+  quiche_config_load_verify_locations_from_directory(config.internal, cstring(path)).toQuicheResult()
 
 ## Configures whether to verify the peer's certificate.
 proc verify_peer*(config: QuicheConfig, value: bool) =
@@ -50,11 +58,11 @@ proc enable_early_data*(config: QuicheConfig) =
   quiche_config_enable_early_data(config.internal)
 
 ## Configures the list of supported application protocols.
-proc set_application_protos*(config: QuicheConfig, protos: openArray[char]): int =
+proc set_application_protos*(config: QuicheConfig, protos: openArray[char]): QuicheResult =
   quiche_config_set_application_protos(
     config.internal, 
     cast[ptr uint8](protos.addr), 
-    csize_t(protos.len))
+    csize_t(protos.len)).toQuicheResult()
 
 ## Sets the anti-amplification limit factor.
 proc set_max_amplification_factor*(config: QuicheConfig, value: csize_t) =
@@ -109,16 +117,16 @@ proc set_disable_active_migration*(config: QuicheConfig, value: bool) =
   quiche_config_set_disable_active_migration(config.internal, value)
 
 ## Sets the congestion control algorithm used by string.
-proc set_cc_algorithm_name*(config: QuicheConfig, name: string): int =
-  quiche_config_set_cc_algorithm_name(config.internal, cstring(name))
+proc set_cc_algorithm_name*(config: QuicheConfig, name: string): QuicheResult =
+  quiche_config_set_cc_algorithm_name(config.internal, cstring(name)).toQuicheResult()
 
 ## Sets the initial cwnd for the connection in terms of packet count.
 proc set_initial_congestion_window_packets*(config: QuicheConfig, packets: csize_t) =
   quiche_config_set_initial_congestion_window_packets(config.internal, packets)
 
 ## Sets the congestion control algorithm used.
-proc set_cc_algorithm*(config: QuicheConfig, algo: enum_quiche_cc_algorithm) =
-  quiche_config_set_cc_algorithm(config.internal, algo)
+proc set_cc_algorithm*(config: QuicheConfig, algo: QuicheCCAlgorithm) =
+  quiche_config_set_cc_algorithm(config.internal, enum_quiche_cc_algorithm(ord(algo)))
 
 ## Configures whether to use HyStart++.
 proc enable_hystart*(config: QuicheConfig, value: bool) =
@@ -157,10 +165,10 @@ proc set_disable_dcid_reuse*(config: QuicheConfig, value: bool) =
   quiche_config_set_disable_dcid_reuse(config.internal, value)
 
 ## Configures the session ticket key material.
-proc set_ticket_key*(config: QuicheConfig, ticket: openArray[char]): int =
+proc set_ticket_key*(config: QuicheConfig, ticket: openArray[char]): QuicheResult =
   quiche_config_set_ticket_key(
     config.internal,
     cast[ptr uint8](ticket.addr),
-    csize_t(ticket.len))
+    csize_t(ticket.len)).toQuicheResult()
 
 

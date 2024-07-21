@@ -13,3 +13,4 @@ bin           = @["quichenim"]
 
 requires "nim >= 2.0.4"
 requires "futhark >= 0.13.2"
+requires "results >= 0.4.0"
