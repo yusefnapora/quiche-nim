@@ -67,12 +67,39 @@ type
 
   QuicheResult* = Result[void, QuicheError]
 
+  SignedSizeT* {.importc: "ssize_t", nodecl.} = int
+  SizeResult* = Result[csize_t, QuicheError]
 
-proc toQuicheResult*(code: int): QuicheResult =
+  BoolResult* = Result[bool, QuicheError]
+
+
+proc toQuicheError*(code: int): QuicheError =
   case code:
-    of 0:
-      ok()
     of ord(low(QuicheError))..ord(high(QuicheError)):
-      err(QuicheError(code))
+      QuicheError(code)
     else:
       raise newException(KeyError, "Unexpected error code: " & $code)
+
+## Converts an integer return value from a quiche FFI call into
+## a `Result[void, QuicheError]` (aka `QuicheResult`)
+proc toQuicheResult*(code: int): QuicheResult =
+  case code:
+    of 0: ok()
+    else: err(code.toQuicheError())
+
+## Converts an integer return value which can either be true (1), false (0), or an error (< 0)
+## into a `Result[bool, QuicheError]` (aka `BoolResult`)
+proc toBoolResult*(code: int): BoolResult =
+  case code:
+    of 1: ok(true)
+    of 0: ok(false)
+    else: err(code.toQuicheError())
+
+## Converts an `ssize_t` from a quiche FFI call into either a `csize_t` success value 
+## or a `QuicheError` if the `size` value is negative.
+proc toSizeResult*(size: SignedSizeT): SizeResult =
+  case size:
+    of 0..high(SignedSizeT):
+      ok(csize_t(size))
+    else:
+      err(size.toQuicheError())

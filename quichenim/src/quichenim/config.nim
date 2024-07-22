@@ -4,7 +4,7 @@ export errors
 
 type 
   QuicheConfig* = object
-    internal: ptr struct_quiche_config
+    internal*: ptr struct_quiche_config
 
   QuicheCCAlgorithm* = enum
     Reno = enum_quiche_cc_algorithm.QUICHE_CC_RENO,

@@ -25,6 +25,8 @@ type
 const SIZEOF_SOCKADDR_STORAGE = 128 # sizeof() complains that sys/posix/Sockaddr_storage doesn't have a known size
 const MAX_TOKEN_LEN = 6 + SIZEOF_SOCKADDR_STORAGE + QUICHE_MAX_CONN_ID_LEN
 
+## Extracts version, type, source / destination connection ID and address
+## verification token from the given packet buffer.
 proc get_header_info*(packet: openArray[byte], localConnIdLen: csize_t): Result[PacketHeader, QuicheError] =
   var scidBuf: array[0..QUICHE_MAX_CONN_ID_LEN, uint8]
   var scidLen: csize_t
