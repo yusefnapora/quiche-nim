@@ -11,13 +11,20 @@ if "/nix/store" in clangPath:
 
   echo "sys include path: " & sysIncludeDir
   echo "clang include path: " & clangIncludeDir
-  switch("d:quichenim.SysPathSystem", sysIncludeDir)
-  switch("d:quichenim.SysPathClang", clangIncludeDir)
+  switch("define", "quichenim.SysPathSystem=" & sysIncludeDir)
+  switch("define", "quichenim.SysPathClang=" & clangIncludeDir)
 
 --noNimblePath
 when withDir(thisDir(), system.fileExists("nimble.paths")):
   include "nimble.paths"
 
-switch("define", "foo=bar")
+var staticLib = "libquiche.a"
+when(defined(windows)):
+  staticLib = "libquiche.lib"
+
+when(defined(quichenim.UseDynamicLinking)):
+  switch("define", "quichenim.PassL=-L./src/quichenim/artifacts -lquiche")
+else: 
+  switch("define", "quichenim.PassL=./src/quichenim/artifacts/" & staticLib)
 
 # end Nimble config
