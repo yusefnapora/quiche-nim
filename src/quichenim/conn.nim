@@ -544,14 +544,14 @@ proc dgram_purge_outgoing*(conn: QuicheConnection, predicate: DgramPredicate) =
   quiche_conn_dgram_purge_outgoing(conn.internal, predicate)
 
 ## Returns whether or not the DATAGRAM send queue is full.
-proc is_dgram_send_queue_full(conn: QuicheConnection): bool =
+proc is_dgram_send_queue_full*(conn: QuicheConnection): bool =
   quiche_conn_is_dgram_send_queue_full(conn.internal)
 
 ## Returns whether or not the DATAGRAM recv queue is full.
-proc is_dgram_recv_queue_full(conn: QuicheConnection): bool =
+proc is_dgram_recv_queue_full*(conn: QuicheConnection): bool =
   quiche_conn_is_dgram_recv_queue_full(conn.internal)
 
 ## Schedule an ack-eliciting packet on the active path.
-proc send_ack_eliciting(conn: QuicheConnection): SizeResult =
+proc send_ack_eliciting*(conn: QuicheConnection): SizeResult =
   quiche_conn_send_ack_eliciting(conn.internal).toSizeResult()
 
