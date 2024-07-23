@@ -1,4 +1,4 @@
-import std/posix
+import std/nativesockets
 import std/options
 
 import ffi
@@ -100,9 +100,9 @@ proc accept*(
 proc connect*(
   server_name: string,
   scid: openArray[uint8],
-  local: SockAddr,
+  local: ptr SockAddr,
   localLen: SockLen,
-  peer: SockAddr,
+  peer: ptr SockAddr,
   peerLen: SockLen,
   config: QuicheConfig
 ): QuicheConnection =
@@ -110,9 +110,9 @@ proc connect*(
     cstring(server_name),
     scid[0].addr,
     csize_t(scid.len),
-   cast[ptr struct_sockaddr](local.addr),
+    cast[ptr struct_sockaddr](local),
     localLen,
-    cast[ptr struct_sockaddr](peer.addr),
+    cast[ptr struct_sockaddr](peer),
     peerLen,
     config.internal, 
   )
