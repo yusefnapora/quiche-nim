@@ -4,6 +4,7 @@ import quichenim/ffi
 import quichenim/config
 import quichenim/packet
 import quichenim/connection
+import quichenim/logging
 
 import std/posix
 import std/nativesockets
@@ -23,8 +24,8 @@ proc `=destroy`(c: ConnIO) =
   if c.peerAddr != nil:
     freeAddrInfo(c.peerAddr)
 
-proc debugLog(line: cstring, arg: pointer) {. cdecl .} =
-  echo "[quiche]: " & $line
+proc debugLog(line: string) =
+  echo "[quiche]: " & line
 
 proc makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
@@ -69,7 +70,7 @@ proc connectPeer(cfg: QuicheConfig, host: string, port: Port): ConnIO =
 
 when isMainModule:
   echo "quiche version: ", $quiche_version()
-  discard quiche_enable_debug_logging(debugLog, nil)
+  discard quiche_debug_log(debugLog)
   let cfg = makeConfig()
 
   let conn = connectPeer(cfg, "localhost", Port(4321))
