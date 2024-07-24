@@ -52,23 +52,23 @@ proc connectPeer(cfg: QuicheConfig, host: string, port: Port): ConnIO =
     scid = genConnectionId()
   
   var
-    localSockAddr: SockAddr
+    localSockAddr: Sockaddr_storage
     localSockLen: SockLen
 
     peerSockAddr: SockAddr
     peerSockLen: SockLen
 
-  if getsockname(sock.getFd(), localSockAddr.addr, localSockLen.addr) != cint(0):
+  if getsockname(sock.getFd(), cast[ptr SockAddr](localSockAddr.addr), localSockLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
 
   echo "peer addr family: " & $peer.ai_family
   echo "got local socket addr: " &  $localSockAddr
-  let conn = connection.connect(host, scid, localSockAddr.addr, localSockLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
+  let conn = connection.connect(host, scid, cast[ptr SockAddr](localSockAddr.addr), localSockLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
 
   ConnIO(peerAddr: peer, conn: conn)
 
 when isMainModule:
-  echo "quiche version: ", version()
+  echo "quiche version: ", $quiche_version()
   discard quiche_enable_debug_logging(debugLog, nil)
   let cfg = makeConfig()
 

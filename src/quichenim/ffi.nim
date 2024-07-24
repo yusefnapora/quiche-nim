@@ -15,8 +15,3 @@ else:
   include "futhark_generated.nim"
 
 {. passl: PassL .}
-echo "linker flags: " & PassL
-
-proc version*(): string =
-  var v = quiche_version()
-  $v
