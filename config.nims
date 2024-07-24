@@ -3,11 +3,12 @@ import os, strutils
 
 var clangPath = findExe("clang")
 if "/nix/store" in clangPath:
-  var packageDir = clangPath.replace("/bin/clang", "")
-  var cflagsFilePath = packageDir & "/nix-support/libc-cflags"
-  var cflagsContent = readFile(cflagsFilePath)
-  var sysIncludeDir = cflagsContent.split(" ")[1]
-  var clangIncludeDir = packageDir & "/resource-root/include"
+  let 
+    packageDir = clangPath.replace("/bin/clang", "")
+    cflagsFilePath = packageDir & "/nix-support/libc-cflags"
+    cflagsContent = readFile(cflagsFilePath)
+    sysIncludeDir = cflagsContent.split(" ")[1]
+    clangIncludeDir = packageDir & "/resource-root/include"
 
   echo "sys include path: " & sysIncludeDir
   echo "clang include path: " & clangIncludeDir
