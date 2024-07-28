@@ -39,10 +39,13 @@ func makeConfig(): QuicheConfig =
   cfg.set_initial_max_streams_bidi(100)
   cfg.set_initial_max_streams_uni(100)
   cfg.set_disable_active_migration(true)
+  cfg.verify_peer(false) # Don't do this in production!
   cfg
 
+## generates a local connection id
 proc genConnectionId(): seq[uint8] =
   urandom(LOCAL_CONN_ID_LEN)
+
 
 proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
   let 
@@ -99,7 +102,9 @@ proc processNextIncoming(c: ConnIO) {.async.} =
 
   fromAddrLen = sizeof(fromAddr).SockLen
 
-  let packetLen = await c.sock.recvFromInto(buf.addr, buf.len, cast[ptr SockAddr](fromAddr.addr), fromAddrLen.addr)
+  let 
+    packetLen = await c.sock.recvFromInto(buf.addr, buf.len, cast[ptr SockAddr](fromAddr.addr), fromAddrLen.addr)
+    packet = buf[0..(packetLen-1)]
   echo "read packet from socket with len: " & $packetLen
 
   let recvInfo = RecvInfo(from_addr: 
@@ -108,8 +113,7 @@ proc processNextIncoming(c: ConnIO) {.async.} =
     to_addr: cast[ptr SockAddr](c.localAddr.addr),
     to_len: c.localAddrLen)
 
-  let readRes = c.conn.recv(buf, recvInfo)
-  let len = readRes.expect("read failed")
+  let len = c.conn.recv(packet, recvInfo).expect("read failed")
   echo "quiche processed packet with len: " & $len
 
 proc processAllIncoming(c: ConnIO): Future[int] {.async.} =

@@ -14,7 +14,10 @@ type
 
 proc `=destroy`*(config: QuicheConfig) =
   if config.internal != nil:
+    echo "freeing quiche config"
     quiche_config_free(config.internal)
+
+proc `=copy`*(x: var QuicheConfig, y: QuicheConfig) {.error.}
 
 ## Creates a config object with the given version.
 proc newQuicheConfig*(version: int): QuicheConfig =
@@ -58,6 +61,7 @@ proc enable_early_data*(config: QuicheConfig) =
   quiche_config_enable_early_data(config.internal)
 
 ## Configures the list of supported application protocols.
+# TODO: take in an array of strings & join before passing to quiche
 proc set_application_protos*(config: QuicheConfig, protos: openArray[char]): QuicheResult =
   quiche_config_set_application_protos(
     config.internal, 
