@@ -1,24 +1,21 @@
 # Nim port of the quiche example client, to validate that things actually work
 
-import quichenim/ffi
-import quichenim/config
-import quichenim/packet
-import quichenim/connection
-import quichenim/logging
+import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/posix
-import std/nativesockets
-import std/asyncnet
-import std/sysrand
+import std/[posix, nativesockets, asyncdispatch, asyncnet, sysrand, cmdline, strutils]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
 
 type
   ConnIO = object
-    peerAddr: ptr AddrInfo
     conn: QuicheConnection
-
+    sock: AsyncSocket
+    peerAddr: ptr AddrInfo
+    peerHost: string
+    peerPort: Port
+    localAddr: Sockaddr_in
+    localAddrLen: SockLen
 
 proc `=destroy`(c: ConnIO) =
   if c.peerAddr != nil:
@@ -27,7 +24,7 @@ proc `=destroy`(c: ConnIO) =
 proc debugLog(line: string) =
   echo "[quiche]: " & line
 
-proc makeConfig(): QuicheConfig =
+func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
   cfg.set_application_protos("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
     .expect("unable to set application protocols")
@@ -46,34 +43,84 @@ proc makeConfig(): QuicheConfig =
 proc genConnectionId(): seq[uint8] =
   urandom(LOCAL_CONN_ID_LEN)
 
-proc connectPeer(cfg: QuicheConfig, host: string, port: Port): ConnIO =
+proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
   let 
     peer = getAddrInfo(host, port, Domain.AF_UNSPEC, SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP)
-    sock = newAsyncSocket(Domain.AF_INET, SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP)
+    sock = newAsyncSocket(Domain(peer.ai_family), SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP) 
     scid = genConnectionId()
   
   var
-    localSockAddr: Sockaddr_storage
-    localSockLen: SockLen
+    localAddr: Sockaddr_in
+    localAddrLen: SockLen
 
-    peerSockAddr: SockAddr
-    peerSockLen: SockLen
+  sock.bindAddr()
 
-  if getsockname(sock.getFd(), cast[ptr SockAddr](localSockAddr.addr), localSockLen.addr) != cint(0):
+  localAddr.sin_family = TSa_Family(peer.ai_family)
+  localAddrLen = sizeof(localAddr).SockLen
+  
+  if getsockname(sock.getFd(), cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
 
-  echo "peer addr family: " & $peer.ai_family
-  echo "got local socket addr: " &  $localSockAddr
-  let conn = connection.connect(host, scid, cast[ptr SockAddr](localSockAddr.addr), localSockLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
+  echo "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
+  let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
 
-  ConnIO(peerAddr: peer, conn: conn)
+  ConnIO(
+    conn: conn,
+    sock: sock,
+    peerAddr: peer,
+    peerHost: host,
+    peerPort: port,
+    localAddr: localAddr, 
+    localAddrLen: localAddrLen)
+
+proc bufToStr(b: openArray[byte]): string =
+  var s = newString(b.len)
+  copyMem(s[0].addr, b[0].unsafeAddr, b.len)
+  s
+
+proc sendHandshake(c: ConnIO) {.async.} =
+  var
+    buf: array[0..MAX_DATAGRAM_SIZE, byte]
+    info: SendInfo
+  
+  let 
+    res = c.conn.send(buf, info)
+    size = res.expect("failed to prepare handshake packet")
+
+  await c.sock.sendTo(c.peerHost, c.peerPort, bufToStr(buf))
+  
+proc readAvailablePackets(c: ConnIO) {.async.} =
+  discard ""
+
+proc run(c: ConnIO) {.async.} =
+  await c.sendHandshake()
+
+  while true:
+    var timeout = int(c.conn.timeout_as_millis())
+    var readSuccess = await withTimeout(c.readAvailablePackets(), timeout)
+    if not readSuccess:
+      # TODO: raise error instead?
+      echo "read timeout"
+      break
+
+
+proc parseArgs(): tuple[host: string, port: Port] =
+  if paramCount() < 2:
+    echo "usage: quichenim <host> <port>"
+    system.quit(1)
+  let 
+    host = paramStr(1)
+    port = paramStr(2).parseInt()
+  (host, Port(port))
 
 when isMainModule:
+  let (host, port) = parseArgs()
+  
   echo "quiche version: ", $quiche_version()
   discard quiche_debug_log(debugLog)
   let cfg = makeConfig()
 
-  let conn = connectPeer(cfg, "localhost", Port(4321))
+  let conn = prepareConnection(cfg, host, port)
   echo "conn: " & $conn
 
 
