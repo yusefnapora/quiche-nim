@@ -2,3 +2,6 @@ nimble.develop
 nimble.paths
 src/quichenim/artifacts/
 /quichenim
+vendor/quiche/quiche/examples/build/
+vendor/quiche/quiche/examples/server*
+vendor/quiche/quiche/examples/client*
