@@ -13,7 +13,7 @@
           inherit system overlays;
         };
         inherit (pkgs) lib;
-        inherit (pkgs.stdenv) isLinux;
+        inherit (pkgs.stdenv) isLinux isDarwin;
 
         rust-toolchain = pkgs.rust-bin.stable.latest.default;
 
@@ -27,6 +27,10 @@
           nimble
           clang
           libclang.dev
+
+          # for building C examples:
+          libev
+          uthash
         ];
 
         packages-linux = packages-common;
@@ -44,10 +48,17 @@
         ]);
 
         packages = if isLinux then packages-linux else packages-darwin;
+
+        # prevent warning about malloc_nano on macos:
+        # https://stackoverflow.com/a/70209891
+        shellHook = lib.optionalString isDarwin ''
+          export MallocNanoZone=0
+        '';
       in
       {
         devShell = pkgs.mkShell {
           buildInputs = packages;
+          inherit shellHook;
         };
       });
 }
