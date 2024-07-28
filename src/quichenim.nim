@@ -2,15 +2,16 @@
 
 import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/[posix, nativesockets, asyncdispatch, asyncnet, sysrand, cmdline, strutils]
+import std/[posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
+const HTTP_REQ_STREAM_ID = uint64(4);
 
 type
   ConnIO = object
     conn: QuicheConnection
-    sock: AsyncSocket
+    sock: AsyncFD
     peerAddr: ptr AddrInfo
     peerHost: string
     peerPort: Port
@@ -46,19 +47,17 @@ proc genConnectionId(): seq[uint8] =
 proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
   let 
     peer = getAddrInfo(host, port, Domain.AF_UNSPEC, SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP)
-    sock = newAsyncSocket(Domain(peer.ai_family), SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP) 
+    sock = createAsyncNativeSocket(Domain(peer.ai_family), SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP) 
     scid = genConnectionId()
   
   var
     localAddr: Sockaddr_in
     localAddrLen: SockLen
 
-  sock.bindAddr()
-
   localAddr.sin_family = TSa_Family(peer.ai_family)
   localAddrLen = sizeof(localAddr).SockLen
   
-  if getsockname(sock.getFd(), cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
+  if getsockname(sock.SocketHandle, cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
 
   echo "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
@@ -73,55 +72,98 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
     localAddr: localAddr, 
     localAddrLen: localAddrLen)
 
-proc bufToStr(b: openArray[byte]): string =
-  var s = newString(b.len)
-  copyMem(s[0].addr, b[0].unsafeAddr, b.len)
-  s
-
-proc sendHandshake(c: ConnIO) {.async.} =
+## Generate outgoing QUIC packets & send them on the socket,
+## until quiche reports there are no more to send
+proc sendOutgoing(c: ConnIO) {.async.} =
   var
     buf: array[0..MAX_DATAGRAM_SIZE, byte]
     info: SendInfo
   
-  let 
-    res = c.conn.send(buf, info)
-    size = res.expect("failed to prepare handshake packet")
+  while true:
+    let res = c.conn.send(buf, info)
+    if res.isErr:
+      let e = res.error()
+      if e == QuicheError.Done:
+        return
+      echo "send failed: " & $e
+      # c.conn.close(app: false, 1, "fail")
+    let len = res.get()
 
-  await c.sock.sendTo(c.peerHost, c.peerPort, bufToStr(buf))
+    await c.sock.sendTo(buf.addr, int(len), c.peerAddr.ai_addr, c.peerAddr.ai_addrlen.SockLen)
   
-proc readAvailablePackets(c: ConnIO) {.async.} =
-  discard ""
+proc processNextIncoming(c: ConnIO) {.async.} =
+  var 
+    buf: array[0..MAX_DATAGRAM_SIZE, byte]
+    fromAddr: Sockaddr_storage
+    fromAddrLen: SockLen
 
-proc run(c: ConnIO) {.async.} =
-  await c.sendHandshake()
+  fromAddrLen = sizeof(fromAddr).SockLen
 
+  let packetLen = await c.sock.recvFromInto(buf.addr, buf.len, cast[ptr SockAddr](fromAddr.addr), fromAddrLen.addr)
+  echo "read packet from socket with len: " & $packetLen
+
+  let recvInfo = RecvInfo(from_addr: 
+    cast[ptr SockAddr](fromAddr.addr), 
+    from_len: fromAddrLen,
+    to_addr: cast[ptr SockAddr](c.localAddr.addr),
+    to_len: c.localAddrLen)
+
+  let readRes = c.conn.recv(buf, recvInfo)
+  let len = readRes.expect("read failed")
+  echo "quiche processed packet with len: " & $len
+
+proc processAllIncoming(c: ConnIO): Future[int] {.async.} =
+  var count = 0
   while true:
     var timeout = int(c.conn.timeout_as_millis())
-    var readSuccess = await withTimeout(c.readAvailablePackets(), timeout)
+    var readSuccess = await withTimeout(c.processNextIncoming(), timeout)
     if not readSuccess:
-      # TODO: raise error instead?
-      echo "read timeout"
+      c.conn.on_timeout()
       break
+    count += 1
+  count
+
+proc run(c: ConnIO, url: Uri) {.async.} =
+  await c.sendOutgoing()
+  echo "sent initial packet"
+
+  var n = await c.processAllIncoming()
+  echo "processed " & $n & " packets"
+
+  if c.conn.is_closed():
+    echo "connection closed"
+    return
+
+  echo "initial handshake complete"
+  echo "sending http request to URI: " & $url
+  let req = "GET " & $url.path & "\r\n"
+  var sendErrorCode: uint64
+  let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
+
+  await c.sendOutgoing()
+  echo "sent http request"
 
 
-proc parseArgs(): tuple[host: string, port: Port] =
-  if paramCount() < 2:
-    echo "usage: quichenim <host> <port>"
+proc parseArgs(): tuple[uri: Uri, host: string, port: Port] =
+  if paramCount() < 1:
+    echo "usage: quichenim <url>"
     system.quit(1)
   let 
-    host = paramStr(1)
-    port = paramStr(2).parseInt()
-  (host, Port(port))
+    url = parseUri(paramStr(1))
+    host = string(url.hostname)
+    port = string(url.port).parseInt().Port
+
+  (url, host, port)
 
 when isMainModule:
-  let (host, port) = parseArgs()
+  let (url, host, port) = parseArgs()
   
   echo "quiche version: ", $quiche_version()
   discard quiche_debug_log(debugLog)
   let cfg = makeConfig()
 
   let conn = prepareConnection(cfg, host, port)
-  echo "conn: " & $conn
-
+  echo "starting event loop"
+  waitFor conn.run(url)
 
 

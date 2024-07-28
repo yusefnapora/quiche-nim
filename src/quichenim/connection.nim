@@ -281,7 +281,7 @@ proc stream_recv*(
 proc stream_send*(
   conn: QuicheConnection,
   stream_id: uint64,
-  buf: openArray[uint8],
+  buf: openArray[byte],
   fin: bool,
   out_error_code: var uint64
 ): SizeResult =
