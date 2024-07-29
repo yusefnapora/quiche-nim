@@ -70,3 +70,4 @@ after quicheBuild:
 
 before build:
   quicheBuildTask()
+  copyArtifactsTask()
