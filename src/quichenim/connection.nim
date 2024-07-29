@@ -1,9 +1,6 @@
-import std/nativesockets
-import std/options
+import std/[nativesockets, options, posix]
 
-import ffi
-import config
-import errors
+import ./[ffi, config, errors]
 export errors
 
 type
@@ -21,6 +18,7 @@ type
     from_len*: SockLen
     to_addr*: Sockaddr_storage
     to_len*: SockLen
+    at*: Timespec
 
   ShutdownDirection* = enum
     Read = 0,
@@ -191,7 +189,8 @@ proc wrap_send_info(info: struct_quiche_send_info): SendInfo =
     from_addr: cast[Sockaddr_storage](info.from_field),
     from_len: cast[SockLen](info.from_len),
     to_addr: cast[Sockaddr_storage](info.to),
-    to_len: cast[SockLen](info.to_len)
+    to_len: cast[SockLen](info.to_len),
+    at: cast[Timespec](info.at)
   )
 
 ## Processes QUIC packets received from the peer.
