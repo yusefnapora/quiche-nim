@@ -60,13 +60,26 @@ proc log_keys*(config: QuicheConfig) =
 proc enable_early_data*(config: QuicheConfig) =
   quiche_config_enable_early_data(config.internal)
 
+
 ## Configures the list of supported application protocols.
-# TODO: take in an array of strings & join before passing to quiche
-proc set_application_protos*(config: QuicheConfig, protos: openArray[char]): QuicheResult =
+## Accepts a single byte string with length-prefixed protocol id strings.
+proc set_application_protos_wire*(config: QuicheConfig, protos: openArray[byte]): QuicheResult =
   quiche_config_set_application_protos(
     config.internal, 
     cast[ptr uint8](protos.addr), 
     csize_t(protos.len)).toQuicheResult()
+
+## Configures the list of supported application protocols.
+## Accepts a variable number of nim strings and converts to wire format.
+proc set_application_protos*(config: QuicheConfig, protos: varargs[string]): QuicheResult =
+  var joined = newSeq[byte](protos.len)
+  for p in protos:
+    let l = p.len.byte
+    joined.add(l)
+    for c in p:
+      joined.add(byte(c))
+  config.set_application_protos_wire(joined)
+
 
 ## Sets the anti-amplification limit factor.
 proc set_max_amplification_factor*(config: QuicheConfig, value: csize_t) =
