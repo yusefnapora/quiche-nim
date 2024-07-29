@@ -148,6 +148,49 @@ proc run(c: ConnIO, url: Uri) {.async.} =
   debugLog "sent http request"
 
 
+# WIP: rewrite the naive await-ing `run` proc into an explicitly polling loop
+proc eventLoop(c: ConnIO, url: Uri) =
+  var socketReadFuture: Future[void]
+  var socketSendFuture: Future[void]
+  var sentRequest: bool = false
+
+  while true:
+    var shouldRead = true
+    try:
+      poll(c.conn.timeout_as_millis().int)
+    except ValueError:
+      # If the event loop reported no events, it means that the timeout
+      # has expired, so handle it without attempting to read packets. We
+      # will then proceed with the send loop.
+      echo "timed out"
+      c.conn.on_timeout()
+      shouldRead = false
+    
+    if shouldRead:
+      # TODO: 
+      # - if we have an existing future that's completed, feed the data into quiche and start reading the next packet.
+      # - if we have a pending future, treat it like a "Would block" error in the rust client and end the read loop
+      discard
+
+    debugLog "Done reading"
+
+    if c.conn.is_established() and not sentRequest:
+      # TODO:
+      # - send GET request as soon as connection is established using c.conn.stream_send
+      discard
+
+    for s in c.conn.readable():
+      # TODO: read from each incoming stream and pipe to console
+      discard
+    
+    # TODO:
+    # - Generate outgoing QUIC packets using c.conn.send
+    # - send packets on socket until quiche signals we're done or sending would block
+
+    if c.conn.is_closed():
+      debugLog "connection closed"
+      break
+
 proc parseArgs(): tuple[uri: Uri, host: string, port: Port] =
   if paramCount() < 1:
     debugLog "usage: quichenim <url>"
