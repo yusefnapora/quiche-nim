@@ -22,8 +22,8 @@ proc `=destroy`(c: ConnIO) =
   if c.peerAddr != nil:
     freeAddrInfo(c.peerAddr)
 
-proc debugLog(line: string) =
-  echo "[quiche]: " & line
+proc debugLog(line: string, origin: string = "client") =
+  stderr.writeLine "[" & origin & "]: " & line & "\n"
 
 func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
@@ -63,7 +63,7 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
   if getsockname(sock.SocketHandle, cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
 
-  echo "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
+  debugLog "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
   let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
 
   ConnIO(
@@ -88,7 +88,7 @@ proc sendOutgoing(c: ConnIO) {.async.} =
       let e = res.error()
       if e == QuicheError.Done:
         return
-      echo "send failed: " & $e
+      debugLog "send failed: " & $e
       # c.conn.close(app: false, 1, "fail")
     let len = res.get()
 
@@ -105,7 +105,7 @@ proc processNextIncoming(c: ConnIO) {.async.} =
   let 
     packetLen = await c.sock.recvFromInto(buf.addr, buf.len, cast[ptr SockAddr](fromAddr.addr), fromAddrLen.addr)
     packet = buf[0..(packetLen-1)]
-  echo "read packet from socket with len: " & $packetLen
+  debugLog "read packet from socket with len: " & $packetLen
 
   let recvInfo = RecvInfo(from_addr: 
     cast[ptr SockAddr](fromAddr.addr), 
@@ -114,7 +114,7 @@ proc processNextIncoming(c: ConnIO) {.async.} =
     to_len: c.localAddrLen)
 
   let len = c.conn.recv(packet, recvInfo).expect("read failed")
-  echo "quiche processed packet with len: " & $len
+  debugLog "quiche processed packet with len: " & $len
 
 proc processAllIncoming(c: ConnIO): Future[int] {.async.} =
   var count = 0
@@ -129,28 +129,28 @@ proc processAllIncoming(c: ConnIO): Future[int] {.async.} =
 
 proc run(c: ConnIO, url: Uri) {.async.} =
   await c.sendOutgoing()
-  echo "sent initial packet"
+  debugLog "sent initial packet"
 
   var n = await c.processAllIncoming()
-  echo "processed " & $n & " packets"
+  debugLog "processed " & $n & " packets"
 
   if c.conn.is_closed():
-    echo "connection closed"
+    debugLog "connection closed"
     return
 
-  echo "initial handshake complete"
-  echo "sending http request to URI: " & $url
+  debugLog "initial handshake complete"
+  debugLog "sending http request to URI: " & $url
   let req = "GET " & $url.path & "\r\n"
   var sendErrorCode: uint64
   let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
 
   await c.sendOutgoing()
-  echo "sent http request"
+  debugLog "sent http request"
 
 
 proc parseArgs(): tuple[uri: Uri, host: string, port: Port] =
   if paramCount() < 1:
-    echo "usage: quichenim <url>"
+    debugLog "usage: quichenim <url>"
     system.quit(1)
   let 
     url = parseUri(paramStr(1))
@@ -162,12 +162,12 @@ proc parseArgs(): tuple[uri: Uri, host: string, port: Port] =
 when isMainModule:
   let (url, host, port) = parseArgs()
   
-  echo "quiche version: ", $quiche_version()
-  discard quiche_debug_log(debugLog)
+  debugLog "quiche version: " & $quiche_version()
+  discard quiche_debug_log(proc (line: string) = debugLog(line, "quiche"))
   let cfg = makeConfig()
 
   let conn = prepareConnection(cfg, host, port)
-  echo "starting event loop"
+  debugLog "starting event loop"
   waitFor conn.run(url)
 
 
