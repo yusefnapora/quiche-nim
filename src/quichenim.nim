@@ -27,7 +27,7 @@ proc debugLog(line: string, origin: string = "client") =
 
 func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
-  cfg.set_application_protos("hq-interop", "hq-29", "hq-28", "hq-27", "http/0.9")
+  cfg.set_application_protos("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
     .expect("unable to set application protocols")
 
   cfg.set_max_idle_timeout(5000)
