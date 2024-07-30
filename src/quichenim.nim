@@ -2,7 +2,7 @@
 
 import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/[posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri]
+import std/[os, posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
@@ -147,12 +147,75 @@ proc run(c: ConnIO, url: Uri) {.async.} =
   await c.sendOutgoing()
   debugLog "sent http request"
 
+proc readLoop(c: ConnIO) =
+  var 
+    buf: array[0..MAX_DATAGRAM_SIZE, byte]
+    fromAddr: Sockaddr_storage
+    fromLen: SockLen
+
+  # let flags = {SocketFlag.SafeDisconn} 
+  while true:
+    let res = recvfrom(c.sock.SocketHandle, buf.addr, buf.len.cint, 0.cint,
+    cast[ptr SockAddr](fromAddr.addr), fromLen.addr)
+    if res < 0:
+      let lastError = osLastError()
+
+      # if no data available, break out of the read look
+      if lastError.int32 == EINTR or lastError.int32 == EWOULDBLOCK or lastError.int32 == EAGAIN:
+        break
+      else:
+        raise newException(Exception, "read failed")
+
+    let 
+      recvInfo = RecvInfo(from_addr: 
+        cast[ptr SockAddr](fromAddr.addr), 
+        from_len: fromLen,
+        to_addr: cast[ptr SockAddr](c.localAddr.addr),
+        to_len: c.localAddrLen)
+      packet = buf[0..(res-1)]
+
+
+    let len = c.conn.recv(packet, recvInfo).expect("read failed")
+    debugLog "quiche processed packet with len: " & $len 
+
+## Generate outgoing QUIC packets & send them on the socket,
+## until quiche reports there are no more to send
+proc sendLoop(c: ConnIO) =
+  var
+    buf: array[0..MAX_DATAGRAM_SIZE, byte]
+    info: SendInfo
+  
+  while true:
+    let res = c.conn.send(buf, info)
+    if res.isErr:
+      let e = res.error()
+      if e == QuicheError.Done:
+        return
+      debugLog "send failed: " & $e
+      # c.conn.close(app: false, 1, "fail")
+    let 
+      len = res.get()
+      packet = buf[0..(len-1)]
+      size = sendto(c.sock.SocketHandle, packet.addr, packet.len, MSG_NOSIGNAL, cast[ptr SockAddr](c.peerAddr.ai_addr), c.peerAddr.ai_addrlen)
+    
+    if size < 0:
+      let lastError = osLastError()
+
+      # if no data available, break out of the send loop
+      if lastError.int32 == EINTR or lastError.int32 == EWOULDBLOCK or lastError.int32 == EAGAIN:
+        break
+      else:
+        raise newException(Exception, "send failed")
+
+    debugLog "sent " & $size & " bytes on socket"
+  
 
 # WIP: rewrite the naive await-ing `run` proc into an explicitly polling loop
 proc eventLoop(c: ConnIO, url: Uri) =
-  var socketReadFuture: Future[void]
-  var socketSendFuture: Future[void]
   var sentRequest: bool = false
+
+  # send initial handshake packet & block until complete
+  waitFor c.sendOutgoing()
 
   while true:
     var shouldRead = true
@@ -162,30 +225,30 @@ proc eventLoop(c: ConnIO, url: Uri) =
       # If the event loop reported no events, it means that the timeout
       # has expired, so handle it without attempting to read packets. We
       # will then proceed with the send loop.
-      echo "timed out"
+      # echo "timed out"
       c.conn.on_timeout()
       shouldRead = false
     
     if shouldRead:
-      # TODO: 
-      # - if we have an existing future that's completed, feed the data into quiche and start reading the next packet.
-      # - if we have a pending future, treat it like a "Would block" error in the rust client and end the read loop
-      discard
-
-    debugLog "Done reading"
+      c.readLoop()
+      debugLog "Done reading"
 
     if c.conn.is_established() and not sentRequest:
-      # TODO:
-      # - send GET request as soon as connection is established using c.conn.stream_send
-      discard
+      debugLog "initial handshake complete"
+      debugLog "sending http request to URI: " & $url
+      let req = "GET " & $url.path & "\r\n"
+      var sendErrorCode: uint64
+      let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
+      debugLog "queued up " & $sent & " bytes to send on http stream"
+      sentRequest = true
+      break
+
 
     for s in c.conn.readable():
       # TODO: read from each incoming stream and pipe to console
       discard
     
-    # TODO:
-    # - Generate outgoing QUIC packets using c.conn.send
-    # - send packets on socket until quiche signals we're done or sending would block
+    c.sendLoop()
 
     if c.conn.is_closed():
       debugLog "connection closed"
@@ -211,6 +274,6 @@ when isMainModule:
 
   let conn = prepareConnection(cfg, host, port)
   debugLog "starting event loop"
-  waitFor conn.run(url)
+  conn.eventLoop(url)
 
 
