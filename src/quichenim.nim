@@ -2,7 +2,7 @@
 
 import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/[os, posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri, strformat]
+import std/[os, posix, net, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri, strformat]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
@@ -26,7 +26,7 @@ proc debugLog(line: string, origin: string = "client") =
   stderr.writeLine &"[{origin}]: {line}\n"
 
 func makeConfig(): QuicheConfig =
-  let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
+  let cfg = newQuicheConfig(0xbabababa)
   cfg.set_application_protos("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
     .expect("unable to set application protocols")
 
@@ -53,6 +53,9 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
     sock = createAsyncNativeSocket(Domain(peer.ai_family), SockType.SOCK_DGRAM, Protocol.IPPROTO_UDP) 
     scid = genConnectionId()
   
+  if connect(sock.SocketHandle, peer.ai_addr, peer.ai_addrlen) != cint(0):
+    raise newException(Exception, &"unable to connect to peer socket: {osLastError()}")
+
   var
     localAddr: Sockaddr_storage
     localAddrLen: SockLen
@@ -62,8 +65,13 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
   
   if getsockname(sock.SocketHandle, cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
-
-  debugLog "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
+  
+  # FIXME: don't assume Sockaddr_in (could be ipv6)
+  let 
+    localAddrIn = cast[Sockaddr_in](localAddr)
+    localAddrStr = getAddrString(cast[ptr SockAddr](localAddr.addr))
+    localPort = localAddrIn.sin_port
+  debugLog &"got local socket addr: {localAddrStr}:{$localPort}"
   let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, peer.ai_addrlen, cfg)
 
   ConnIO(
@@ -81,10 +89,10 @@ proc readLoop(c: ConnIO) =
     fromAddr: Sockaddr_storage
     fromLen: SockLen
 
-  # let flags = {SocketFlag.SafeDisconn} 
+  let flags = {SocketFlag.SafeDisconn} 
   while true:
-    let res = recvfrom(c.sock.SocketHandle, buf[0].addr, buf.len.cint, 0.cint,
-      cast[ptr SockAddr](fromAddr.addr), fromLen.addr)
+    let res = recvfrom(c.sock.SocketHandle, buf[0].addr, buf.len.cint, flags.toOsFlags(),
+      nil, nil)
     if res < 0:
       let lastError = osLastError()
 
@@ -95,9 +103,9 @@ proc readLoop(c: ConnIO) =
         raise newException(Exception, "read failed")
 
     let 
-      recvInfo = RecvInfo(from_addr: 
-        cast[ptr SockAddr](fromAddr.addr), 
-        from_len: fromLen,
+      recvInfo = RecvInfo(
+        from_addr: c.peerAddr.ai_addr, 
+        from_len: c.peerAddr.ai_addrlen,
         to_addr: cast[ptr SockAddr](c.localAddr.addr),
         to_len: c.localAddrLen)
       packet = buf[0..(res-1)]
@@ -125,7 +133,7 @@ proc sendLoop(c: ConnIO) =
       len = res.get()
       packet = buf[0..(len-1)]
       size = sendto(c.sock.SocketHandle, packet[0].addr, packet.len, MSG_NOSIGNAL, 
-        cast[ptr SockAddr](info.to_addr.addr), info.to_len)
+        nil, 0)
       packetInfo = get_header_info(packet, LOCAL_CONN_ID_LEN)
 
     debugLog &"outgoing len: {len}"
@@ -141,7 +149,7 @@ proc sendLoop(c: ConnIO) =
       if lastError.int32 == EINTR or lastError.int32 == EWOULDBLOCK or lastError.int32 == EAGAIN:
         break
       else:
-        raise newException(Exception, "send failed")
+        raise newException(Exception, &"send failed: {lastError}")
 
     debugLog &"sent {$size} bytes on socket"
   
@@ -162,7 +170,7 @@ proc eventLoop(c: ConnIO, url: Uri) =
       # will then proceed with the send loop.
       # echo "timed out"
       c.conn.on_timeout()
-      shouldRead = false
+      # shouldRead = false
     
     if shouldRead:
       c.readLoop()
