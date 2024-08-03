@@ -166,9 +166,7 @@ proc readAllStreams(c: ConnIO): bool =
     fin: bool
     errorCode: uint64
 
-  var streamIdOpt = c.conn.stream_readable_next() 
-  while streamIdOpt.isSome:
-    let streamId = streamIdOpt.get()
+  for streamId in c.conn.readable():
     debugLog &"reading from stream {streamId}"
     let res = c.conn.stream_recv(streamId, buf, fin, errorCode)
     if res.isErr:
@@ -182,7 +180,6 @@ proc readAllStreams(c: ConnIO): bool =
 
     if streamId == HTTP_REQ_STREAM_ID and fin:
       return true
-    streamIdOpt = c.conn.stream_readable_next() 
 
   false
 
