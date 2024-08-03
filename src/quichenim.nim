@@ -25,6 +25,11 @@ proc `=destroy`(c: ConnIO) =
 proc debugLog(line: string, origin: string = "client") =
   stderr.writeLine &"[{origin}]: {line}\n"
 
+proc echoBytes(bytes: openArray[byte]) =
+  let s = newString(bytes.len)
+  copyMem(s[0].addr, bytes[0].unsafeAddr, bytes.len)
+  echo s
+
 func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(0xbabababa)
   cfg.set_application_protos("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
@@ -153,6 +158,33 @@ proc sendLoop(c: ConnIO) =
 
     debugLog &"sent {$size} bytes on socket"
   
+## Reads data from all readable streams and dumps to stdout
+## Returns true if we're finished reading all HTTP data
+proc readAllStreams(c: ConnIO): bool =
+  var
+    buf: array[0..65535, byte]
+    fin: bool
+    errorCode: uint64
+
+  var streamIdOpt = c.conn.stream_readable_next() 
+  while streamIdOpt.isSome:
+    let streamId = streamIdOpt.get()
+    debugLog &"reading from stream {streamId}"
+    let res = c.conn.stream_recv(streamId, buf, fin, errorCode)
+    if res.isErr:
+      debugLog &"stream read error: {res.error()} (error code: {errorCode})"
+      continue
+    let 
+      len = res.get()
+      streamBuf = buf[0..(len-1)]
+    debugLog &"stream {streamId} has {len} bytes"
+    echoBytes streamBuf
+
+    if streamId == HTTP_REQ_STREAM_ID and fin:
+      return true
+    streamIdOpt = c.conn.stream_readable_next() 
+
+  false
 
 proc eventLoop(c: ConnIO, url: Uri) =
   var sentRequest: bool = false
@@ -161,20 +193,15 @@ proc eventLoop(c: ConnIO, url: Uri) =
   c.sendLoop()
 
   while true:
-    var shouldRead = true
     try:
       poll(c.conn.timeout_as_millis().int)
     except ValueError:
       # If the event loop reported no events, it means that the timeout
-      # has expired, so handle it without attempting to read packets. We
-      # will then proceed with the send loop.
-      # echo "timed out"
+      # has expired, so we inform quiche
       c.conn.on_timeout()
-      # shouldRead = false
     
-    if shouldRead:
-      c.readLoop()
-      debugLog "Done reading"
+    c.readLoop()
+    # debugLog "Done reading"
 
     if c.conn.is_established() and not sentRequest:
       debugLog "initial handshake complete"
@@ -184,13 +211,14 @@ proc eventLoop(c: ConnIO, url: Uri) =
       let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
       debugLog &"queued up {sent} bytes to send on http stream"
       sentRequest = true
+
+    # read available data from all QUIC streams
+    let shouldClose = c.readAllStreams()
+    if shouldClose:
+      # TODO: close the connection to be polite
       break
-
-
-    for s in c.conn.readable():
-      # TODO: read from each incoming stream and pipe to console
-      discard
     
+    # send any outgoing packets
     c.sendLoop()
 
     if c.conn.is_closed():

@@ -1,7 +1,7 @@
 import std/[nativesockets, options, posix]
 
 import ./[ffi, config, errors]
-export errors
+export errors, config, ffi, options, posix
 
 type
   QuicheConnection* = object
@@ -59,12 +59,13 @@ proc copyToSeq(buf: ptr uint8, len: csize_t): seq[uint8] =
   copyMem(s[0].addr, buf, len) 
   s
 
-iterator ids(it: StreamIterator): uint64 =
+iterator items*(it: StreamIterator): uint64 =
   var id: uint64
   while quiche_stream_iter_next(it.internal, id.addr):
+    echo "next stream id: " & $id
     yield id
 
-iterator ids(it: ConnectionIdIterator): string =
+iterator items*(it: ConnectionIdIterator): string =
   var id_handle: ptr uint8
   var id_len: csize_t
   while quiche_connection_id_iter_next(it.internal, id_handle.addr, id_len.addr):
@@ -332,16 +333,12 @@ proc stream_finished*(conn: QuicheConnection, stream_id: uint64): bool =
   quiche_conn_stream_finished(conn.internal, stream_id)
 
 ## Returns an iterator over streams that have outstanding data to read.
-iterator readable*(conn: QuicheConnection): uint64 =
-  var it = StreamIterator(internal: quiche_conn_readable(conn.internal))
-  for id in it.ids():
-    yield id
+proc readable*(conn: QuicheConnection): StreamIterator =
+  StreamIterator(internal: quiche_conn_readable(conn.internal))
 
 ## Returns an iterator over streams that can be written to.
-iterator writable*(conn: QuicheConnection): uint64 =
-  var it = StreamIterator(internal: quiche_conn_writable(conn.internal))
-  for id in it.ids():
-    yield id
+proc writable*(conn: QuicheConnection): StreamIterator =
+  StreamIterator(internal: quiche_conn_writable(conn.internal))
 
 ## Returns the maximum possible size of egress UDP payloads.
 proc max_send_udp_payload_size*(conn: QuicheConnection): csize_t =
@@ -378,10 +375,8 @@ proc source_id*(conn: QuicheConnection): string =
   copyToString(id_handle, id_len)
 
 ## Returns all active source connection IDs.
-iterator source_ids*(conn: QuicheConnection): string =
-  var it = ConnectionIdIterator(internal: quiche_conn_source_ids(conn.internal))
-  for id in it.ids():
-    yield id
+proc source_ids*(conn: QuicheConnection): ConnectionIdIterator =
+  ConnectionIdIterator(internal: quiche_conn_source_ids(conn.internal))
 
 ## Returns the destination connection ID.
 proc destination_id*(conn: QuicheConnection): string =

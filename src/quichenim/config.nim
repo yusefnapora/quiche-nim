@@ -14,7 +14,7 @@ type
 
 proc `=destroy`*(config: QuicheConfig) =
   if config.internal != nil:
-    echo "freeing quiche config"
+    # echo "freeing quiche config"
     quiche_config_free(config.internal)
 
 proc `=copy`*(x: var QuicheConfig, y: QuicheConfig) {.error.}
