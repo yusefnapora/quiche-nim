@@ -36,7 +36,8 @@ proc get_header_info*(packet: openArray[byte], localConnIdLen: csize_t): Result[
   var tokenLen: csize_t
   var version: uint32
   var typeCode: uint8
-  ?quiche_header_info(
+  
+  let res = quiche_header_info(
     cast[ptr uint8](packet.addr),
     csize_t(packet.len),
     localConnIdLen,
@@ -49,6 +50,8 @@ proc get_header_info*(packet: openArray[byte], localConnIdLen: csize_t): Result[
     tokenBuf[0].addr,
     tokenLen.addr,
   ).toQuicheResult()
+  if res.isErr and res.error() != QuicheError.Done:
+    return err(res.error())
   
   ok(PacketHeader(
     packetType: PacketType(typeCode),
