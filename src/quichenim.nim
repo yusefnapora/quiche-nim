@@ -2,11 +2,11 @@
 
 import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/[os, posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri]
+import std/[os, posix, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri, strformat]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
-const HTTP_REQ_STREAM_ID = uint64(4);
+const HTTP_REQ_STREAM_ID = uint64(4)
 
 type
   ConnIO = object
@@ -15,7 +15,7 @@ type
     peerAddr: ptr AddrInfo
     peerHost: string
     peerPort: Port
-    localAddr: Sockaddr_in
+    localAddr: Sockaddr_storage
     localAddrLen: SockLen
 
 proc `=destroy`(c: ConnIO) =
@@ -23,7 +23,7 @@ proc `=destroy`(c: ConnIO) =
     freeAddrInfo(c.peerAddr)
 
 proc debugLog(line: string, origin: string = "client") =
-  stderr.writeLine "[" & origin & "]: " & line & "\n"
+  stderr.writeLine &"[{origin}]: {line}\n"
 
 func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(QUICHE_PROTOCOL_VERSION)
@@ -54,17 +54,17 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
     scid = genConnectionId()
   
   var
-    localAddr: Sockaddr_in
+    localAddr: Sockaddr_storage
     localAddrLen: SockLen
 
-  localAddr.sin_family = TSa_Family(peer.ai_family)
+  localAddr.ss_family = TSa_Family(peer.ai_family)
   localAddrLen = sizeof(localAddr).SockLen
   
   if getsockname(sock.SocketHandle, cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
 
   debugLog "got local socket addr: " &  getAddrString(cast[ptr SockAddr](localAddr.addr))
-  let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, SockLen(peer.ai_addrlen), cfg)
+  let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, peer.ai_addrlen, cfg)
 
   ConnIO(
     conn: conn,
@@ -75,78 +75,6 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
     localAddr: localAddr, 
     localAddrLen: localAddrLen)
 
-## Generate outgoing QUIC packets & send them on the socket,
-## until quiche reports there are no more to send
-proc sendOutgoing(c: ConnIO) {.async.} =
-  var
-    buf: array[0..MAX_DATAGRAM_SIZE, byte]
-    info: SendInfo
-  
-  while true:
-    let res = c.conn.send(buf, info)
-    if res.isErr:
-      let e = res.error()
-      if e == QuicheError.Done:
-        return
-      debugLog "send failed: " & $e
-      # c.conn.close(app: false, 1, "fail")
-    let len = res.get()
-
-    await c.sock.sendTo(buf.addr, int(len), c.peerAddr.ai_addr, c.peerAddr.ai_addrlen.SockLen)
-  
-proc processNextIncoming(c: ConnIO) {.async.} =
-  var 
-    buf: array[0..MAX_DATAGRAM_SIZE, byte]
-    fromAddr: Sockaddr_storage
-    fromAddrLen: SockLen
-
-  fromAddrLen = sizeof(fromAddr).SockLen
-
-  let 
-    packetLen = await c.sock.recvFromInto(buf.addr, buf.len, cast[ptr SockAddr](fromAddr.addr), fromAddrLen.addr)
-    packet = buf[0..(packetLen-1)]
-  debugLog "read packet from socket with len: " & $packetLen
-
-  let recvInfo = RecvInfo(from_addr: 
-    cast[ptr SockAddr](fromAddr.addr), 
-    from_len: fromAddrLen,
-    to_addr: cast[ptr SockAddr](c.localAddr.addr),
-    to_len: c.localAddrLen)
-
-  let len = c.conn.recv(packet, recvInfo).expect("read failed")
-  debugLog "quiche processed packet with len: " & $len
-
-proc processAllIncoming(c: ConnIO): Future[int] {.async.} =
-  var count = 0
-  while true:
-    var timeout = int(c.conn.timeout_as_millis())
-    var readSuccess = await withTimeout(c.processNextIncoming(), timeout)
-    if not readSuccess:
-      c.conn.on_timeout()
-      break
-    count += 1
-  count
-
-proc run(c: ConnIO, url: Uri) {.async.} =
-  await c.sendOutgoing()
-  debugLog "sent initial packet"
-
-  var n = await c.processAllIncoming()
-  debugLog "processed " & $n & " packets"
-
-  if c.conn.is_closed():
-    debugLog "connection closed"
-    return
-
-  debugLog "initial handshake complete"
-  debugLog "sending http request to URI: " & $url
-  let req = "GET " & $url.path & "\r\n"
-  var sendErrorCode: uint64
-  let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
-
-  await c.sendOutgoing()
-  debugLog "sent http request"
-
 proc readLoop(c: ConnIO) =
   var 
     buf: array[0..MAX_DATAGRAM_SIZE, byte]
@@ -155,12 +83,12 @@ proc readLoop(c: ConnIO) =
 
   # let flags = {SocketFlag.SafeDisconn} 
   while true:
-    let res = recvfrom(c.sock.SocketHandle, buf.addr, buf.len.cint, 0.cint,
-    cast[ptr SockAddr](fromAddr.addr), fromLen.addr)
+    let res = recvfrom(c.sock.SocketHandle, buf[0].addr, buf.len.cint, 0.cint,
+      cast[ptr SockAddr](fromAddr.addr), fromLen.addr)
     if res < 0:
       let lastError = osLastError()
 
-      # if no data available, break out of the read look
+      # if no data available, break out of the read loop
       if lastError.int32 == EINTR or lastError.int32 == EWOULDBLOCK or lastError.int32 == EAGAIN:
         break
       else:
@@ -176,7 +104,7 @@ proc readLoop(c: ConnIO) =
 
 
     let len = c.conn.recv(packet, recvInfo).expect("read failed")
-    debugLog "quiche processed packet with len: " & $len 
+    debugLog &"quiche processed packet with len: {len}" 
 
 ## Generate outgoing QUIC packets & send them on the socket,
 ## until quiche reports there are no more to send
@@ -196,26 +124,33 @@ proc sendLoop(c: ConnIO) =
     let 
       len = res.get()
       packet = buf[0..(len-1)]
-      size = sendto(c.sock.SocketHandle, packet.addr, packet.len, MSG_NOSIGNAL, cast[ptr SockAddr](c.peerAddr.ai_addr), c.peerAddr.ai_addrlen)
-    
+      size = sendto(c.sock.SocketHandle, packet[0].addr, packet.len, MSG_NOSIGNAL, 
+        cast[ptr SockAddr](info.to_addr.addr), info.to_len)
+      packetInfo = get_header_info(packet, LOCAL_CONN_ID_LEN)
+
+    debugLog &"outgoing len: {len}"
+    if packetInfo.isErr:
+      debugLog &"error getting header info from outgoing packet: {packetInfo.error()}"
+    else:
+      debugLog &"outgoing packet info: {packetInfo.get()}"
+
     if size < 0:
       let lastError = osLastError()
 
-      # if no data available, break out of the send loop
+      # if sending would block, break out of the send loop
       if lastError.int32 == EINTR or lastError.int32 == EWOULDBLOCK or lastError.int32 == EAGAIN:
         break
       else:
         raise newException(Exception, "send failed")
 
-    debugLog "sent " & $size & " bytes on socket"
+    debugLog &"sent {$size} bytes on socket"
   
 
-# WIP: rewrite the naive await-ing `run` proc into an explicitly polling loop
 proc eventLoop(c: ConnIO, url: Uri) =
   var sentRequest: bool = false
 
-  # send initial handshake packet & block until complete
-  waitFor c.sendOutgoing()
+  # send initial handshake packet
+  c.sendLoop()
 
   while true:
     var shouldRead = true
@@ -235,11 +170,11 @@ proc eventLoop(c: ConnIO, url: Uri) =
 
     if c.conn.is_established() and not sentRequest:
       debugLog "initial handshake complete"
-      debugLog "sending http request to URI: " & $url
+      debugLog &"sending http request to URI: {$url}"
       let req = "GET " & $url.path & "\r\n"
       var sendErrorCode: uint64
       let sent = c.conn.stream_send(HTTP_REQ_STREAM_ID, cast[seq[byte]](req), true, sendErrorCode).expect("stream send failed")
-      debugLog "queued up " & $sent & " bytes to send on http stream"
+      debugLog &"queued up {sent} bytes to send on http stream"
       sentRequest = true
       break
 
