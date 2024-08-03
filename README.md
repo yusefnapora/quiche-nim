@@ -49,11 +49,10 @@ With the example server running on, e.g. `127.0.0.1:4567`, you can run the clien
 ./quichenim http://127.0.0.1:4567/
 ```
 
-It should print some logs at you and die for reasons yet to uncover.
+It should print some logs at you and eventually print the response from the example server (`byez`)
 
 ## Up next
 
-Dig into send failures and try to get a complete HTTP GET exchange working.
-
-This may require rewriting the event loop to explicitly poll, as in the rust and C examples. I think I'm missing timeouts as things go now.
-
+- clean up and refactor things
+- add tests & wire up valgrind to make sure we're not leaking stuff
+- think more about high-level API design
