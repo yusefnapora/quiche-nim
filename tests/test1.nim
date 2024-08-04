@@ -7,6 +7,9 @@
 
 import unittest
 
-import quichenim/submodule
+import quichenim/config
+
+
 test "correct welcome":
-  check getWelcomeMessage() == "Hello, World!"
+  let byteString = cast[seq[char]](toLengthPrefixedBytes("hello", "there", "everyone"))
+  check byteString == "\x05hello\x05there\08everyone"

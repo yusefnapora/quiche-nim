@@ -1,5 +1,7 @@
-import ffi
-import errors
+import std/sequtils
+
+import ./ffi
+import ./errors
 export errors
 
 type 
@@ -11,6 +13,15 @@ type
     Cubic = enum_quiche_cc_algorithm.QUICHE_CC_CUBIC,
     BBR = enum_quiche_cc_algorithm.QUICHE_CC_BBR,
     BBR2 = enum_quiche_cc_algorithm.QUICHE_CC_BBR2, 
+
+proc toLengthPrefixedBytes*(strings: varargs[string]): seq[byte] =
+  var bytes = newSeq[byte]()
+  for s in strings:
+    if s.len > high(byte).int:
+      raise newException(ValueError, "strings must be less than 255 chars")
+    bytes = concat(bytes, @[s.len.byte], cast[seq[byte]](@s))
+  bytes
+
 
 proc `=destroy`*(config: QuicheConfig) =
   if config.internal != nil:
@@ -62,11 +73,15 @@ proc enable_early_data*(config: QuicheConfig) =
 
 ## Configures the list of supported application protocols.
 # TODO: take in an array of strings & join before passing to quiche
-proc set_application_protos*(config: QuicheConfig, protos: openArray[char]): QuicheResult =
+proc set_application_protos*(config: QuicheConfig, protos: openArray[byte]): QuicheResult =
   quiche_config_set_application_protos(
     config.internal, 
     cast[ptr uint8](protos.addr), 
     csize_t(protos.len)).toQuicheResult()
+
+proc set_application_protos*(config: QuicheConfig, protos: varargs[string]): QuicheResult =
+  let wireFormatted = toLengthPrefixedBytes(protos)
+  config.set_application_protos(wireFormatted)
 
 ## Sets the anti-amplification limit factor.
 proc set_max_amplification_factor*(config: QuicheConfig, value: csize_t) =
