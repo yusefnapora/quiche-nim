@@ -2,7 +2,7 @@
 
 import ./quichenim/[ffi, config, packet, connection, logging]
 
-import std/[os, posix, net, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri, strformat]
+import std/[os, posix, net, nativesockets, asyncdispatch, sysrand, cmdline, strutils, uri, strformat, options]
 
 const MAX_DATAGRAM_SIZE = 1350
 const LOCAL_CONN_ID_LEN = 16
@@ -29,6 +29,23 @@ proc echoBytes(bytes: openArray[byte]) =
   let s = newString(bytes.len)
   copyMem(s[0].addr, bytes[0].unsafeAddr, bytes.len)
   echo s
+
+proc getPort(sockAddr: ptr SockAddr): int =
+  case sockAddr.sa_family:
+  of Domain.AF_INET.uint8:
+    let a = cast[ptr Sockaddr_in](sockAddr)
+    a.sin_port.int
+  of Domain.AF_INET6.uint8:
+    let a = cast[ptr Sockaddr_in6](sockAddr)
+    a.sin6_port.int
+  else:
+    raise newException(ValueError, &"unsupported address family {sockAddr.sa_family}")
+
+proc `$`(sockAddr: ptr SockAddr): string = 
+  let
+    port = getPort(sockAddr)
+    host = getAddrString(sockAddr)
+  &"{host}:{port}"
 
 func makeConfig(): QuicheConfig =
   let cfg = newQuicheConfig(0xbabababa)
@@ -67,17 +84,13 @@ proc prepareConnection(cfg: QuicheConfig, host: string, port: Port): ConnIO =
 
   localAddr.ss_family = TSa_Family(peer.ai_family)
   localAddrLen = sizeof(localAddr).SockLen
+  let localAddrPtr = cast[ptr SockAddr](localAddr.addr)
   
-  if getsockname(sock.SocketHandle, cast[ptr SockAddr](localAddr.addr), localAddrLen.addr) != cint(0):
+  if getsockname(sock.SocketHandle, localAddrPtr, localAddrLen.addr) != cint(0):
     raise newException(Exception, "unable to get local socket address")
-  
-  # FIXME: don't assume Sockaddr_in (could be ipv6)
-  let 
-    localAddrIn = cast[Sockaddr_in](localAddr)
-    localAddrStr = getAddrString(cast[ptr SockAddr](localAddr.addr))
-    localPort = localAddrIn.sin_port
-  debugLog &"got local socket addr: {localAddrStr}:{$localPort}"
-  let conn = connection.connect(host, scid, cast[ptr SockAddr](localAddr.addr), localAddrLen, peer.ai_addr, peer.ai_addrlen, cfg)
+   
+  debugLog &"got local socket addr: {$localAddrPtr}"
+  let conn = connection.connect(host, scid, localAddrPtr, localAddrLen, peer.ai_addr, peer.ai_addrlen, cfg)
 
   ConnIO(
     conn: conn,
